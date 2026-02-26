@@ -79,9 +79,12 @@ else
     ARGS=(--workers "$UVICORN_WORKERS")
 fi
 
+mkdir -p logs
+
 # Run uvicorn
 WEBUI_SECRET_KEY="$WEBUI_SECRET_KEY" exec "$PYTHON_CMD" -m uvicorn open_webui.main:app \
     --host "$HOST" \
     --port "$PORT" \
+    --log-config logging.yml \
     --forwarded-allow-ips '*' \
     "${ARGS[@]}"
