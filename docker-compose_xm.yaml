@@ -1,0 +1,54 @@
+services:
+  # 1. Open WebUI 服务
+  open-webui:
+    image: openwebui:v3
+    pull_policy: never
+    container_name: open-webui
+    restart: always
+    ports:
+      - "3000:8080"  # 宿主机 3000 端口 -> 容器 8080 端口
+    environment:
+      # 数据库连接字符串
+      # 格式: postgresql://用户:密码@服务名:端口/数据库名
+      # 注意：这里的 'db' 对应下方数据库服务的名字，Docker 会自动解析 IP
+      - DATABASE_URL=postgresql://webui_user:webui_pass@db:5432/webui_db
+      # 时区设置
+      - TZ=Asia/Shanghai
+      # 告诉 Open WebUI 使用这个模型 ID
+      - RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ 
+      # Hugging Face 库处于离线模式
+      - HF_HUB_OFFLINE=1    
+      
+      # 如果你需要 Open WebUI 连接宿主机的 Ollama，请取消下面注释并将 host.docker.internal 替换为宿主机局域网IP
+      # - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    volumes:
+      # 【关键】宿主机路径映射：防止 WebUI 数据丢失
+      - ./data/webui:/app/backend/data
+    depends_on:
+      - db
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # 允许容器访问宿主机
+
+  # 2. PostgreSQL 数据库服务
+  db:
+    image: postgres:15-alpine
+    container_name: webui-db
+    restart: always
+    environment:
+      - POSTGRES_USER=webui_user
+      - POSTGRES_PASSWORD=webui_pass
+      - POSTGRES_DB=webui_db
+      # 时区设置
+      - TZ=Asia/Shanghai
+    ports:
+      # 将数据库端口暴露给宿主机，方便你用 Navicat/DBeaver 通过 localhost:5432 连接查看数据
+      - "5432:5432"
+    volumes:
+      # 【关键】宿主机路径映射：防止数据库丢失
+      - ./data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webui_user -d webui_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
