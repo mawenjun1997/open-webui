@@ -11,19 +11,33 @@ FROM python:3.11.14-slim-bookworm
 ARG USE_CUDA=false
 ARG USE_CUDA_VER=cu128
 ARG USE_SLIM=false
-ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG USE_EMBEDDING_MODEL=BAAI/bge-m3
 ARG USE_AUXILIARY_EMBEDDING_MODEL=TaylorAI/bge-micro-v2
 
 ENV PYTHONUNBUFFERED=1
 
-# 统一模型缓存目录
-ENV HF_HOME=/model-cache
-ENV SENTENCE_TRANSFORMERS_HOME=/model-cache
-ENV WHISPER_MODEL_DIR=/model-cache/whisper
-ENV TIKTOKEN_CACHE_DIR=/model-cache/tiktoken
-ENV RAG_EMBEDDING_MODEL=${USE_EMBEDDING_MODEL}
-ENV AUXILIARY_EMBEDDING_MODEL=${USE_AUXILIARY_EMBEDDING_MODEL}
-ENV WHISPER_MODEL=base
+## Basis ##
+ENV USE_EMBEDDING_MODEL_DOCKER=${USE_EMBEDDING_MODEL} \
+    USE_RERANKING_MODEL_DOCKER=${USE_RERANKING_MODEL} \
+    USE_AUXILIARY_EMBEDDING_MODEL_DOCKER=${USE_AUXILIARY_EMBEDDING_MODEL}
+    
+#### Other models #########################################################
+## whisper TTS model settings ##
+ENV WHISPER_MODEL="base" \
+    WHISPER_MODEL_DIR="/app/backend/data/cache/whisper/models"
+
+## RAG Embedding model settings ##
+ENV RAG_EMBEDDING_MODEL="$USE_EMBEDDING_MODEL_DOCKER" \
+    RAG_RERANKING_MODEL="$USE_RERANKING_MODEL_DOCKER" \
+    AUXILIARY_EMBEDDING_MODEL="$USE_AUXILIARY_EMBEDDING_MODEL_DOCKER" \
+    SENTENCE_TRANSFORMERS_HOME="/app/backend/data/cache/embedding/models"
+
+## Tiktoken model settings ##
+ENV TIKTOKEN_ENCODING_NAME="cl100k_base" \
+    TIKTOKEN_CACHE_DIR="/app/backend/data/cache/tiktoken"
+
+## Hugging Face download cache ##
+ENV HF_HOME="/app/backend/data/cache/embedding/models"
 
 ENV LANG=C.UTF-8 
 ENV LC_ALL=C.UTF-8
@@ -76,10 +90,10 @@ RUN pip install --no-cache-dir uv && \
 
 # 预下载模型（只执行一次）
 RUN if [ "$USE_SLIM" != "true" ]; then \
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${USE_EMBEDDING_MODEL}', device='cpu')" && \
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${USE_AUXILIARY_EMBEDDING_MODEL}', device='cpu')" && \
-    python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/model-cache/whisper')" && \
-    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \
+    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')" && \
+    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2'), device='cpu')" && \
+    python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"; \
+    python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
     python -c "import nltk; nltk.download('punkt_tab')"; \
     fi
 
