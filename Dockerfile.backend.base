@@ -1,0 +1,88 @@
+# 跳过语法检查
+# syntax=docker/dockerfile:1
+# -----------------------------------------------------------------------------
+# 2. Backend Base Image
+# 包含：运行环境、所有运维工具、Python依赖、预下载模型
+# -----------------------------------------------------------------------------
+
+
+FROM python:3.11.14-slim-bookworm
+
+ARG USE_CUDA=false
+ARG USE_CUDA_VER=cu128
+ARG USE_SLIM=false
+ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG USE_AUXILIARY_EMBEDDING_MODEL=TaylorAI/bge-micro-v2
+
+ENV PYTHONUNBUFFERED=1
+
+# 统一模型缓存目录
+ENV HF_HOME=/model-cache
+ENV SENTENCE_TRANSFORMERS_HOME=/model-cache
+ENV WHISPER_MODEL_DIR=/model-cache/whisper
+ENV TIKTOKEN_CACHE_DIR=/model-cache/tiktoken
+ENV RAG_EMBEDDING_MODEL=${USE_EMBEDDING_MODEL}
+ENV AUXILIARY_EMBEDDING_MODEL=${USE_AUXILIARY_EMBEDDING_MODEL}
+ENV WHISPER_MODEL=base
+
+ENV LANG=C.UTF-8 
+ENV LC_ALL=C.UTF-8
+
+WORKDIR /app/backend
+
+# 临时 HTTP，装 CA
+RUN printf "Types: deb\nURIs: http://mirrors.aliyun.com/debian\nSuites: bookworm\nComponents: main\n\nTypes: deb\nURIs: http://mirrors.aliyun.com/debian-security\nSuites: bookworm-security\nComponents: main\n" \
+    > /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# 切回 HTTPS
+RUN printf "Types: deb\nURIs: https://mirrors.aliyun.com/debian\nSuites: bookworm\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: https://mirrors.aliyun.com/debian-security\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n" \
+    > /etc/apt/sources.list.d/debian.sources
+
+# 系统依赖
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git build-essential pandoc gcc netcat-openbsd curl jq \
+    python3-dev ffmpeg libsm6 libxext6 zstd \
+    # === 常用运维工具 (你指定的部分) ===
+    vim \
+    telnet \
+    wget \
+    iputils-ping \
+    net-tools \
+    procps \
+    less \
+    ca-certificates \    
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
+# 只复制 requirements（最大化缓存）
+COPY ./backend/requirements.txt ./requirements.txt
+
+# 安装 Python 依赖
+RUN pip install --no-cache-dir uv && \
+    if [ "$USE_CUDA" = "true" ]; then \
+        pip install 'torch<=2.9.1' torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/${USE_CUDA_VER}; \
+    else \
+        pip install 'torch<=2.9.1' torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cpu; \
+    fi && \
+    uv pip install --system -r requirements.txt
+
+# 预下载模型（只执行一次）
+RUN if [ "$USE_SLIM" != "true" ]; then \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${USE_EMBEDDING_MODEL}', device='cpu')" && \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${USE_AUXILIARY_EMBEDDING_MODEL}', device='cpu')" && \
+    python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/model-cache/whisper')" && \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" && \
+    python -c "import nltk; nltk.download('punkt_tab')"; \
+    fi
+
+RUN rm -rf /var/lib/apt/lists/*;
+
+CMD ["python3"]

@@ -1,0 +1,22 @@
+# 跳过语法检查
+# syntax=docker/dockerfile:1
+# -----------------------------------------------------------------------------
+# 1. Frontend Base Image
+# 仅用于构建编译，无需运维工具，保持轻量
+# -----------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM node:22-alpine3.20
+
+WORKDIR /app
+
+# 设置 Node 内存限制，防止 OOM
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# to store git revision in build
+RUN apk add --no-cache git
+
+COPY package.json package-lock.json ./
+RUN npm config set registry https://registry.npmmirror.com/
+RUN npm ci --force
+
+CMD ["node"]
+
